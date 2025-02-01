@@ -1,73 +1,148 @@
 import express from "express";
 import multer from "multer";
 import ffmpeg from "fluent-ffmpeg";
-import ffmpegStatic from "ffmpeg-static"; // Import ffmpeg-static
+import ffmpegStatic from "ffmpeg-static";
 import fs from "fs";
 import path from "path";
 
 const app = express();
-const PORT = 3000;
+const PORT = 3002;
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Set FFmpeg path from ffmpeg-static
+
+// ✅ Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic!);
 
-// Configure Multer for file uploads
+// ✅ Define a static uploads folder
 const uploadFolder = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadFolder)) {
   fs.mkdirSync(uploadFolder);
 }
+
+// ✅ Configure Multer for file uploads
 const upload = multer({ dest: uploadFolder });
 
-// Serve uploads folder as static files
-app.use("/uploads", express.static(uploadFolder));
+const addSubtitles = (videoPath: string, srtPath: string, outputPath: string, callback: Function) => {
+  console.log("🔄 Adding Subtitles...");
 
-// API: Upload a Video
+  // Convert paths to absolute paths & fix Windows paths
+  const absoluteVideoPath = path.resolve(videoPath).replace(/\\/g, "/").trim();
+  const absoluteSrtPath = path.resolve(srtPath).replace(/\\/g, "/").trim();
+  const absoluteOutputPath = path.resolve(outputPath).replace(/\\/g, "/").trim();
+
+  console.log("📌 Absolute Video Path:", absoluteVideoPath);
+  console.log("📌 Absolute Subtitle Path:", absoluteSrtPath);
+  console.log("📌 Absolute Output Path:", absoluteOutputPath);
+
+  // Verify if files exist
+  if (!fs.existsSync(absoluteVideoPath)) {
+    console.error("❌ Video file NOT found:", absoluteVideoPath);
+    return callback(true, "Video file not found.");
+  }
+  if (!fs.existsSync(absoluteSrtPath)) {
+    console.error("❌ Subtitle file NOT found:", absoluteSrtPath);
+    return callback(true, "Subtitle file not found.");
+  }
+
+  // 🔥 Run FFmpeg with properly formatted paths
+  ffmpeg(absoluteVideoPath)  // ✅ Use absolute path
+    .videoCodec("libx264")
+    .audioCodec("aac")
+    .outputOptions([
+      "-vf", `subtitles='${absoluteSrtPath.replace(/:/g, '\\:')}'`,
+      "-c:a", "copy"
+    ])
+    .on("start", (cmd) => console.log("⚡ FFmpeg Command:", cmd))
+    .on("stderr", (stderrLine) => console.error("🔴 FFmpeg Log:", stderrLine))
+    .on("error", (err) => {
+      console.error("🔴 FFmpeg Error:", err);
+      callback(true, err);
+    })
+    .on("end", () => {
+      console.log("✅ Subtitle Added Successfully!");
+      callback(false, absoluteOutputPath);
+    })
+    .save(absoluteOutputPath);
+};
+
 app.post("/upload", upload.single("video"), (req: any, res: any) => {
   if (!req.file) {
     return res.status(400).json({ error: "No video file uploaded." });
   }
 
-  const originalExtension = path.extname(req.file.originalname);
-  const newFileName = `${req.file.filename}${originalExtension}`;
-  const newFilePath = path.join(uploadFolder, newFileName);
+  const { question } = req.body;
+  if (!question) {
+    return res.status(400).json({ error: "No subtitle text provided." });
+  }
+  console.log("question", question);
 
-  fs.renameSync(req.file.path, newFilePath);
 
-  const videoUrl = `/uploads/${newFileName}`;
-  res.send(`
-    <html>
-      <body>
-        <h1>Video Uploaded Successfully</h1>
-        <video width="640" height="360" controls>
-          <source src="${videoUrl}" type="${req.file.mimetype}">
-          Your browser does not support the video tag.
-        </video>
-        <p><a href="${videoUrl}" download>Download Video</a></p>
-      </body>
-    </html>
-  `);
+  const videoFilename = path.parse(req.file.filename).name;
+  const originalPath = req.file.path;
+  const videoPath = path.join(uploadFolder, `${videoFilename}.mp4`);
+  fs.renameSync(originalPath, videoPath);
+
+  const srtPath = path.join(uploadFolder, `${videoFilename}.srt`);
+  const outputVideoPath = path.join(uploadFolder, `output_${videoFilename}.mp4`);
+
+  console.log("📌 Renamed Video Path:", videoPath);
+  console.log("📌 Subtitle Path:", srtPath);
+  console.log("📌 Output Video Path:", outputVideoPath);
+
+  // ✅ Create subtitle file
+  fs.writeFileSync(srtPath, `1\n00:00:00,000 --> 99:00:00,000\n${question}`, "utf8");
+
+  // ✅ Check if subtitle file exists
+  if (!fs.existsSync(srtPath)) {
+    console.error("❌ Subtitle file NOT found:", srtPath);
+    return res.status(500).json({ error: "Subtitle file not found." });
+  } else {
+    console.log("✅ Subtitle file exists:", srtPath);
+  }
+
+  // ✅ Run FFmpeg
+  addSubtitles(videoPath, srtPath, outputVideoPath, (error: boolean, newFilePath: string) => {
+    if (error) {
+      return res.status(500).json({ error: "Failed to add subtitles." });
+    }
+    const outputFileName = path.basename(newFilePath);
+
+    res.json({
+      message: "Video uploaded with subtitles successfully.",
+      videoUrl: `http://localhost:${PORT}/uploads/${outputFileName}`,
+      fileName: outputFileName,
+    });
+  });
 });
 
-// API: Combine Videos
 app.post("/combine", async (req: any, res: any) => {
   try {
-    const files = fs
-      .readdirSync(uploadFolder)
-      .filter((file) => file.endsWith(".mp4"))
-      .map((file) => path.join(uploadFolder, file));
+    console.log("body is", req);
 
-    if (files.length < 2) {
-      return res.status(400).json({ error: "At least two videos are required to combine." });
+    const { files } = req.body;
+
+    if (!files || !Array.isArray(files) || files.length < 2) {
+      return res.status(400).json({ error: "At least two video files are required to combine." });
+    }
+
+    // ✅ Convert filenames to full paths
+    const filePaths = files.map((file) => path.join(uploadFolder, file.name));
+
+    // ✅ Verify that all files exist
+    const missingFiles = filePaths.filter((file) => !fs.existsSync(file));
+    if (missingFiles.length > 0) {
+      return res.status(400).json({ error: "Some files do not exist.", missingFiles });
     }
 
     const listFilePath = path.join(uploadFolder, "file_list.txt");
     const combinedVideoPath = path.join(uploadFolder, "combined_output.mp4");
 
-    // Create the text file listing all video files
-    const listContent = files.map((file) => `file '${file}'`).join("\n");
+    // ✅ Create the file list for FFmpeg
+    const listContent = filePaths.map((file) => `file '${file}'`).join("\n");
     fs.writeFileSync(listFilePath, listContent);
 
-    // Combine the videos using FFmpeg
+    // ✅ Run FFmpeg to combine videos
     ffmpeg()
       .input(listFilePath)
       .inputOptions(["-f concat", "-safe 0"])
@@ -76,21 +151,26 @@ app.post("/combine", async (req: any, res: any) => {
       .on("end", () => {
         res.json({
           message: "Videos combined successfully.",
-          combinedVideoPath: `http://localhost:${PORT}/uploads/combined_output.mp4`,
+          combinedVideoUrl: `http://localhost:${PORT}/uploads/combined_output.mp4`,
         });
       })
       .on("error", (err) => {
-        console.error("Error combining videos:", err);
+        console.error("❌ Error combining videos:", err);
         res.status(500).json({ error: "Failed to combine videos.", details: err.message });
       })
       .run();
   } catch (error: any) {
-    console.error("Error:", error);
+    console.error("❌ Server Error:", error);
     res.status(500).json({ error: "Server error.", details: error.message });
   }
 });
 
-// Start the Server
+
+
+// ✅ Serve video files
+app.use("/uploads", express.static(uploadFolder));
+
+// ✅ Start Server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
