@@ -10,7 +10,6 @@ const PORT = 3002;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-
 // ✅ Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic!);
 
@@ -164,8 +163,6 @@ app.post("/combine", async (req: any, res: any) => {
     res.status(500).json({ error: "Server error.", details: error.message });
   }
 });
-
-
 
 // ✅ Serve video files
 app.use("/uploads", express.static(uploadFolder));
