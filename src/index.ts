@@ -4,9 +4,11 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
 import fs from "fs";
 import path from "path";
+import http from "http";
 
 const app = express();
-const PORT = 3002;
+const PORT = 3003;
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -21,6 +23,14 @@ if (!fs.existsSync(uploadFolder)) {
 
 // ✅ Configure Multer for file uploads
 const upload = multer({ dest: uploadFolder });
+app.use((req, res, next) => {
+  req.setTimeout(15 * 60 * 1000); // 15 minutes timeout
+  res.setTimeout(15 * 60 * 1000, () => {
+    console.log("❌ Response Timeout");
+    res.status(408).json({ error: "Request Timeout. Try again with a smaller file." });
+  });
+  next();
+});
 
 const addSubtitles = (videoPath: string, srtPath: string, outputPath: string, callback: Function) => {
   console.log("🔄 Adding Subtitles...");
@@ -49,14 +59,19 @@ const addSubtitles = (videoPath: string, srtPath: string, outputPath: string, ca
     .videoCodec("libx264")
     .audioCodec("aac")
     .outputOptions([
-      "-vf", `subtitles='${absoluteSrtPath.replace(/:/g, '\\:')}'`,
-      "-c:a", "copy"
+      "-preset ultrafast",   // Apply ultrafast encoding preset (faster encoding)
+      "-crf 23",             // Adjust video quality (lower = better quality, 23 is default)
+      "-vf", `drawtext=text='sadsad sadsadas dsaqweqweqw':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`,
+      "-c:a copy"            // Copy audio without re-encoding (faster processing)
     ])
     .on("start", (cmd) => console.log("⚡ FFmpeg Command:", cmd))
     .on("stderr", (stderrLine) => console.error("🔴 FFmpeg Log:", stderrLine))
     .on("error", (err) => {
       console.error("🔴 FFmpeg Error:", err);
       callback(true, err);
+    })
+    .on("progress", (progress) => {
+      console.log(`🔄 Processing: ${progress.percent}% done`);
     })
     .on("end", () => {
       console.log("✅ Subtitle Added Successfully!");
@@ -164,10 +179,22 @@ app.post("/combine", async (req: any, res: any) => {
   }
 });
 
+app.get("/", (req, res) => {
+  res.json({
+    status: "success",
+    message: "Server is running!",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+
 // ✅ Serve video files
 app.use("/uploads", express.static(uploadFolder));
+const server = http.createServer(app);
 
-// ✅ Start Server
-app.listen(PORT, () => {
+server.timeout = 0;
+server.keepAliveTimeout = 0;
+
+server.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
