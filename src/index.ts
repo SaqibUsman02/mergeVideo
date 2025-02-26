@@ -119,7 +119,7 @@ app.post("/api/upload", upload.single("video"), (req: any, res: any) => {
 
     res.json({
       message: "Video uploaded with subtitles successfully.",
-      videoUrl: `http://localhost:${PORT}/uploads/${outputFileName}`,
+      videoUrl: `http://82.180.163.225:${PORT}/uploads/${outputFileName}`,
       fileName: outputFileName,
     });
   });
@@ -145,7 +145,8 @@ app.post("/api/combine", async (req: any, res: any) => {
     }
 
     const listFilePath = path.join(uploadFolder, "file_list.txt");
-    const combinedVideoPath = path.join(uploadFolder, "combined_output.mp4");
+    const uniqueFilename = `combined_${Date.now()}.mp4`;
+    const combinedVideoPath = path.join(uploadFolder, uniqueFilename);
 
     // ✅ Create the file list for FFmpeg
     const listContent = filePaths.map((file) => `file '${file}'`).join("\n");
@@ -160,7 +161,7 @@ app.post("/api/combine", async (req: any, res: any) => {
       .on("end", () => {
         res.json({
           message: "Videos combined successfully.",
-          combinedVideoUrl: `http://localhost:${PORT}/uploads/combined_output.mp4`,
+          combinedVideoUrl: `http://82.180.163.225:${PORT}/uploads/${uniqueFilename}`,
         });
       })
       .on("error", (err) => {
