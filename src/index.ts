@@ -9,8 +9,8 @@ import http from "http";
 const app = express();
 const PORT = 3003;
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "500mb" }));
+app.use(express.urlencoded({ extended: true, limit: "500mb" }));
 
 // ✅ Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic!);
@@ -59,19 +59,14 @@ const addSubtitles = (videoPath: string, srtPath: string, outputPath: string, ca
     .videoCodec("libx264")
     .audioCodec("aac")
     .outputOptions([
-      "-preset ultrafast",   // Apply ultrafast encoding preset (faster encoding)
-      "-crf 23",             // Adjust video quality (lower = better quality, 23 is default)
-      "-vf", `drawtext=text='sadsad sadsadas dsaqweqweqw':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`,
-      "-c:a copy"            // Copy audio without re-encoding (faster processing)
+      "-vf", `subtitles='${absoluteSrtPath.replace(/:/g, '\\:')}'`,
+      "-c:a", "copy"
     ])
     .on("start", (cmd) => console.log("⚡ FFmpeg Command:", cmd))
     .on("stderr", (stderrLine) => console.error("🔴 FFmpeg Log:", stderrLine))
     .on("error", (err) => {
       console.error("🔴 FFmpeg Error:", err);
       callback(true, err);
-    })
-    .on("progress", (progress) => {
-      console.log(`🔄 Processing: ${progress.percent}% done`);
     })
     .on("end", () => {
       console.log("✅ Subtitle Added Successfully!");
@@ -80,7 +75,7 @@ const addSubtitles = (videoPath: string, srtPath: string, outputPath: string, ca
     .save(absoluteOutputPath);
 };
 
-app.post("/upload", upload.single("video"), (req: any, res: any) => {
+app.post("/api/upload", upload.single("video"), (req: any, res: any) => {
   if (!req.file) {
     return res.status(400).json({ error: "No video file uploaded." });
   }
@@ -130,7 +125,7 @@ app.post("/upload", upload.single("video"), (req: any, res: any) => {
   });
 });
 
-app.post("/combine", async (req: any, res: any) => {
+app.post("/api/combine", async (req: any, res: any) => {
   try {
     console.log("body is", req);
 
